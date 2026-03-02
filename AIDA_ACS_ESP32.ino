@@ -8,8 +8,8 @@
 #include <TJpg_Decoder.h>
 
 // ================= WIFI =================
-const char* ssid = "HitchHiker";
-const char* password = "noc@pkcl";
+const char* ssid = "ID" // Replace this with your wifi name<<<================================ (then add the ;)
+const char* password = "Password"; // Replace this with your wifi password <<<================================
 
 // -------- STATIC IP --------
 IPAddress local_IP(10, 81, 100, 72);
