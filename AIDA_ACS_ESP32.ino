@@ -22,7 +22,7 @@ WebServer server(80);
 
 // ================= URL PARTS =================
 const char* IMG_PREFIX =
-"http://10.81.100.128:3001/api/v1/health/resize?imageUrl=";
+"http://------------------------------------";
 const char* IMG_SUFFIX = "&w=200&h=200";
 
 // ================= PATHS =================
