@@ -2,16 +2,14 @@
 #include <WebServer.h>
 #include <HTTPClient.h>
 #include <SPIFFS.h>
-#include <SD.h>
-#include <SPI.h>
 #include <TFT_eSPI.h>
 #include <TJpg_Decoder.h>
 
 // ================= WIFI =================
-const char* ssid = "ID" // Replace this with your wifi name<<<================================ (then add the ;)
-const char* password = "Password"; // Replace this with your wifi password <<<================================
+const char* ssid     = "id";
+const char* password = "pass";
 
-// -------- STATIC IP --------
+// Static IP
 IPAddress local_IP(10, 81, 100, 72);
 IPAddress gateway(10, 81, 100, 1);
 IPAddress subnet(255, 255, 255, 0);
@@ -20,12 +18,12 @@ IPAddress dns(8, 8, 8, 8);
 // ================= SERVER =================
 WebServer server(80);
 
-// ================= URL PARTS =================
+// ================= IMAGE URL =================
 const char* IMG_PREFIX =
-"http://------------------------------------";
+"http://-----------------/api/v1/health/resize?imageUrl=";
 const char* IMG_SUFFIX = "&w=200&h=200";
 
-// ================= PATHS =================
+// ================= SPIFFS PATHS =================
 #define BG_ON     "/images/bg.jpg"
 #define BG_IDLE   "/images/bg3.jpg"
 #define EMP_PATH  "/emp.jpg"
@@ -33,7 +31,6 @@ const char* IMG_SUFFIX = "&w=200&h=200";
 // ================= PINS =================
 #define RELAY_PIN   22
 #define GREEN_LED   17
-#define SD_CS       5
 
 // ================= DISPLAY =================
 TFT_eSPI tft;
@@ -46,17 +43,20 @@ bool activeMode = false;
 bool tft_output(int16_t x, int16_t y,
                 uint16_t w, uint16_t h,
                 uint16_t* bitmap) {
+
   if (y >= tft.height()) return false;
   tft.pushImage(x, y, w, h, bitmap);
   return true;
 }
 
-// ================= DOWNLOAD IMAGE =================
+// ================= DOWNLOAD EMPLOYEE IMAGE =================
 bool downloadEmployee(String url) {
+
   HTTPClient http;
   WiFiClient client;
 
   if (!http.begin(client, url)) return false;
+
   http.addHeader("Accept", "image/jpeg");
 
   int code = http.GET();
@@ -86,47 +86,57 @@ bool downloadEmployee(String url) {
   return true;
 }
 
-// ================= DRAW BACKGROUND =================
+// ================= BACKGROUND =================
 void drawBackground(const char* path) {
-  File bg = SD.open(path);
-  if (!bg) return;
 
-  int len = bg.size();
-  uint8_t* buf = (uint8_t*)malloc(len);
-  if (!buf) {
-    bg.close();
-    return;
-  }
-
-  bg.read(buf, len);
-  bg.close();
+  if (!SPIFFS.exists(path)) return;
 
   tft.setRotation(1);
-  TJpgDec.drawJpg(0, 0, buf, len);
-  free(buf);
+  TJpgDec.drawFsJpg(0, 0, path);
 }
 
-// ================= DRAW EMPLOYEE =================
-void drawEmployeeCenterRotated() {
+// ================= EMPLOYEE IMAGE =================
+void drawEmployeeCenter() {
+
   if (!SPIFFS.exists(EMP_PATH)) return;
 
   tft.setRotation(0);
+
   int x = (tft.width() - 200) / 2;
   int y = (tft.height() - 200) / 2;
-  TJpgDec.drawJpg(x, y, EMP_PATH);
+
+  TJpgDec.drawFsJpg(x, y, EMP_PATH);
+
   tft.setRotation(1);
+}
+
+// ================= RELAY LOGIC (INVERTED) =================
+// HIGH = CLOSE DOOR
+// LOW  = OPEN DOOR
+
+void openDoor() {
+  digitalWrite(RELAY_PIN, LOW);   // OPEN
+  digitalWrite(GREEN_LED, HIGH);
+}
+
+void closeDoor() {
+  digitalWrite(RELAY_PIN, HIGH);  // CLOSE
+  digitalWrite(GREEN_LED, LOW);
 }
 
 // ================= IDLE MODE =================
 void enterIdle() {
+
   drawBackground(BG_IDLE);
-  digitalWrite(RELAY_PIN, LOW);
-  digitalWrite(GREEN_LED, LOW);
+
+  closeDoor();   // SAFE STATE = CLOSE
+
   activeMode = false;
 }
 
-// ================= ON HANDLER =================
+// ================= /ON HANDLER =================
 void handleOn() {
+
   if (!server.hasArg("empPicUrl")) {
     server.send(400, "text/plain", "Missing empPicUrl");
     return;
@@ -138,36 +148,57 @@ void handleOn() {
   drawBackground(BG_ON);
 
   if (downloadEmployee(fullURL)) {
-    drawEmployeeCenterRotated();
+    drawEmployeeCenter();
   }
 
-  digitalWrite(RELAY_PIN, HIGH);
-  digitalWrite(GREEN_LED, HIGH);
+  openDoor();   // 🚪 OPEN (LOW)
 
   actionStart = millis();
   activeMode = true;
 
-  server.send(200, "text/plain", "ON OK");
+  server.send(200, "text/plain", "DOOR OPENED");
 }
 
-// ================= SILENT HANDLER =================
+// ================= /SILENT HANDLER =================
 void handleSilent() {
+
   drawBackground(BG_IDLE);
-  digitalWrite(RELAY_PIN, HIGH);
-  digitalWrite(GREEN_LED, HIGH);
+
+  openDoor();   // 🔓 Open (Low)
 
   actionStart = millis();
   activeMode = true;
 
-  server.send(200, "text/plain", "SILENT OK");
+  server.send(200, "text/plain", "DOOR CLOSED");
+}
+
+// ================= SPIFFS DEBUG =================
+void listSPIFFS() {
+
+  Serial.println("\n=== SPIFFS FILE LIST ===");
+
+  File root = SPIFFS.open("/");
+  File file = root.openNextFile();
+
+  while (file) {
+    Serial.print("FILE: ");
+    Serial.println(file.name());
+    file = root.openNextFile();
+  }
+
+  Serial.println("=== END ===\n");
 }
 
 // ================= SETUP =================
 void setup() {
+
   Serial.begin(115200);
 
   pinMode(RELAY_PIN, OUTPUT);
   pinMode(GREEN_LED, OUTPUT);
+
+  // SAFE START → DOOR CLOSED
+  closeDoor();
 
   tft.init();
   tft.setRotation(1);
@@ -176,18 +207,22 @@ void setup() {
   TJpgDec.setSwapBytes(true);
   TJpgDec.setCallback(tft_output);
 
-  SPIFFS.begin(true);
-  SD.begin(SD_CS);
-
-  // -------- APPLY STATIC IP --------
-  if (!WiFi.config(local_IP, gateway, subnet, dns)) {
-    Serial.println("❌ STA Failed to configure");
+  if (!SPIFFS.begin(true)) {
+    Serial.println("SPIFFS ERROR");
+    return;
   }
 
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) delay(300);
+  listSPIFFS();
 
-  Serial.print("✅ ESP32 IP: ");
+  WiFi.config(local_IP, gateway, subnet, dns);
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(300);
+    Serial.print(".");
+  }
+
+  Serial.println("\nWiFi Connected");
   Serial.println(WiFi.localIP());
 
   server.on("/on", handleOn);
@@ -199,6 +234,7 @@ void setup() {
 
 // ================= LOOP =================
 void loop() {
+
   server.handleClient();
 
   if (activeMode && millis() - actionStart > 5000) {
